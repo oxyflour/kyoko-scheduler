@@ -1,0 +1,26 @@
+{
+  "name": "kyoko-scheduler",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "bin": {
+    "kyk": "./cli.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "ts-node": "^4.1.0",
+    "typescript": "^2.7.2"
+  },
+  "dependencies": {
+    "@types/node": "^9.4.7",
+    "commander": "^2.14.1",
+    "etcd3": "^0.2.9",
+    "kyoko-mesh": "^0.2.6",
+    "tree-kill": "^1.2.0"
+  }
+}
