@@ -98,6 +98,7 @@ export default class Service extends EventEmitter {
     }
 
     private async initExecutor(lease: Lease, task: Partial<Task>) {
+        await this.poll(lease)
         const cmd = task.cmd || `echo "no cmd defined"`,
             cwd = task.cwd || '/',
             env = task.env || { },

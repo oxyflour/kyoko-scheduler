@@ -50,9 +50,16 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
     },
     async dispatch(job: Partial<Job>, step: string, worker: Partial<Worker>, tasks: Dict<Partial<Task>>) {
         logger.log(`dispatching job "${job.id}", step "${step}" to worker "${worker.id}"`, tasks)
-        const started = await mesh.query(WORKER_RPC).workers[worker.id || ''].start(tasks)
-        await Promise.all(started.map(id =>
-            etcd.put(`job/${job.id}/started/${step}/${id}`).value(JSON.stringify(tasks[id]))))
+        const lock = await etcd.lock(`dispatch-worker/${worker.id}`).acquire()
+        try {
+            const started = await mesh.query(WORKER_RPC).workers[worker.id || ''].start(tasks)
+            await Promise.all(started.map(id =>
+                etcd.put(`job/${job.id}/started/${step}/${id}`).value(JSON.stringify(tasks[id]))))
+            await lock.release()
+        } catch (err) {
+            logger.error(`dispatch task failed`, err)
+            await lock.release()
+        }
     },
     async start(j: Partial<Job>, step: string, deps: Dict<Dict<Partial<Task>>>) {
         const job = new Job(j),
@@ -89,11 +96,12 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         const jobs = await etcd.namespace(`submited/`).getAll().keys()
         logger.log(`got ${jobs.length} jobs to update`)
         for (const id of jobs) {
-            const lock = await etcd.lock(`update/${id}`).acquire()
+            const lock = await etcd.lock(`check-task/${id}`).acquire()
             try {
                 await this.update(id)
                 await lock.release()
             } catch (err) {
+                logger.error(`update task failed`, err)
                 await lock.release()
             }
         }
