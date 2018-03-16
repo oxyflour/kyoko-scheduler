@@ -7,7 +7,7 @@ import { Etcd3, Namespace, IOptions, Lease } from 'etcd3'
 import schedulerAPI from './api/scheduler'
 import workerAPI from './api/worker'
 import executorAPI from './api/executor'
-import { Worker, Task, Usage } from './models'
+import { Worker, Task } from './models'
 
 const DEFAULT_CONFIG = {
     id: 'N' + Math.random().toString(16).slice(2, 10) + '-H' + os.hostname(),
@@ -64,6 +64,9 @@ export default class Service extends EventEmitter {
         await mesh.announce()
         await this.poll(lease)
         this.emit('ready', mesh)
+        if (this.opts.scheduler.start || this.opts.worker.start || this.opts.executor.start) {
+            this.opts.logger.log(`node "${this.opts.id}" ready`)
+        }
 
         while (1) {
             try {
@@ -86,10 +89,16 @@ export default class Service extends EventEmitter {
         } as Partial<Worker>
     }
 
+    private async getTaskMeta() {
+        const task = new Task(this.opts.executor.task),
+            usage = await task.plan()
+        return Object.assign(task, { usage })
+    }
+
     private async initWorker(lease: Lease) {
         const val = JSON.stringify(await this.getWorkerMeta()),
             namespace = this.etcd.namespace(`worker/${this.opts.id}/tags/`)
-        await lease.put(`tagged/none/${this.opts.id}`).value(val)
+        await lease.put(`tagged/any/${this.opts.id}`).value(val)
         const tags = await namespace.getAll().keys(),
             watcher = await namespace.watch().prefix('').create()
         watcher.on('connected', () => tags.map(tag => lease.put(`tagged/${tag}/${this.opts.id}`).value(val)))
@@ -98,14 +107,18 @@ export default class Service extends EventEmitter {
     }
 
     private async initExecutor(lease: Lease, task: Partial<Task>) {
+        Object.assign(this.opts.executor.task, { created: Date.now() })
         await this.poll(lease)
         const cmd = task.cmd || `echo "no cmd defined"`,
             cwd = task.cwd || '/',
             env = task.env || { },
+            stdio = 'inherit',
             shell = true,
-            proc = spawn(cmd, [ ], { env, cwd, shell })
+            proc = spawn(cmd, [ ], { stdio, env, cwd, shell })
         proc.on('exit', async (code, signal) => {
             this.opts.logger.log(`exited with code ${code}, signal ${signal}`)
+            Object.assign(this.opts.executor.task, { finished: Date.now() })
+            await this.poll(lease)
             await lease.revoke()
             process.exit(code)
         })
@@ -115,29 +128,18 @@ export default class Service extends EventEmitter {
         return { proc }
     }
 
-    private async getExecutorUsage() {
-        const task = new Task(this.opts.executor.task),
-            last = Date.now() - task.created + 10 * 60 * 1000
-        return {
-            task,
-            res: {
-                [0]:    { cpu: 1 },
-                [last]: { cpu: 1 },
-            },
-        } as Partial<Usage>
-    }
-
     private async poll(lease: Lease) {
         if (this.opts.worker.start) {
-            await lease.put(`worker/${this.opts.id}`)
-                .value(JSON.stringify(await this.getWorkerMeta()))
+            const meta = JSON.stringify(await this.getWorkerMeta())
+            await lease.put(`worker/${this.opts.id}`).value(meta)
         }
         if (this.opts.executor.task) {
-            const val = JSON.stringify(await this.getExecutorUsage()),
-                { worker } = this.opts.executor.task
-            await lease.put(`executor/${this.opts.id}`).value(val)
-            if (worker) {
-                await lease.put(`used/${worker.id}/${this.opts.id}`).value(val)
+            const meta = JSON.stringify(await this.getTaskMeta())
+            await lease.put(`executor/${this.opts.id}`).value(meta)
+            const { worker, job, step } = this.opts.executor.task
+            if (worker && job) {
+                await lease.put(`working/${worker.id}/${this.opts.id}`).value(meta)
+                await this.etcd.put(`job/${job.id}/started/${step}/${this.opts.id}`).value(meta)
             }
         }
     }

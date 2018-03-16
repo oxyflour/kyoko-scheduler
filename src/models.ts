@@ -25,34 +25,24 @@ export class Step {
         Object.assign(this, data)
     }
     deps = [ ] as string[]
-    tags = [ ] as string[]
+    tags = ['any']
     count = 1
     cmd = ''
     cwd = ''
     env = { } as Dict<string>
-    async require(_job: Partial<Job>, _step: string, _deps: Dict<Dict<Partial<Task>>>,
-            _started: Dict<Partial<Task>>) {
-        const t = 60 * 60 * 1000
-        return {
-            task: {
-                created: Date.now()
-            },
-            res: {
-                [0]: { cpu: 1 },
-                [t]: { cpu: 1 },
-            },
-        } as Partial<Usage>
-    }
-    async plan(job: Partial<Job>, step: string, _deps: Dict<Dict<Partial<Task>>>,
+    res = null as IResource | null
+    async plan(job: Partial<Job>,
+            step: string, _deps: Dict<Dict<Partial<Task>>>,
             started: Dict<Partial<Task>>, workers: Partial<Worker>[]) {
         const rest = this.count - Object.keys(started).length
+        // have enough workers to run?
         if (rest > 0 && workers.length >= rest) {
             const plans = Array(rest).fill(Object.keys(started).length)
                 .map((start, offset) => ({ job, index: start + offset }))
             return plans.map((arg, index) => {
                 const worker = workers[index],
                     tasks = { } as Dict<Task>
-                tasks[`j${job.id}-s${step}-w${worker.id}-t${arg.index}`] = new Task({
+                tasks[`J${job.id}-S${step}-T${arg.index}`] = new Task({
                     index: arg.index,
                     total: this.count,
                     cmd: format(this.cmd, arg),
@@ -63,8 +53,13 @@ export class Step {
                 })
                 return { worker, tasks }
             })
+        // need more workers?
         } else if (rest > 0) {
             return [ ]
+        // wait for all tasks to finish?
+        } else if (Object.values(started).some(task => !task.finished)) {
+            return [ ]
+        // done
         } else {
             return
         }
@@ -88,13 +83,37 @@ export class Task {
     job = { } as Partial<Job>
     step = ''
     worker = { } as Partial<Worker>
+
+    usage = { } as { [time: string]: IResource }
+    async plan() {
+        const t = Date.now() + 60 * 60 * 1000 - this.created,
+            step = (this.job.steps || { })[this.step],
+            res = (step || { }).res || { cpu: 1 } as IResource
+        return { [0]: res, [t]: res } as Dict<IResource>
+    }
+    res(time: number) {
+        const { usage, created } = this,
+            ticks = Object.keys(usage)
+                .map(time => parseInt(time) + (created || 0))
+                .sort((a, b) => a - b),
+            res = Object.values(usage),
+            index = ticks.findIndex((_, index) => ticks[index] <= time && time < ticks[index + 1])
+        if (index >= 0) {
+            const [t0, t1] = [ticks[index], ticks[index + 1]],
+                [r0, r1] = [res[index], res[index + 1]],
+                k = (time - t0) / (t1 - t0)
+            return new Resource(r1).mul(k / (1 - k)).add(r0).mul(1 - k)
+        } else {
+            return
+        }
+    }
 }
 
 export interface IResource {
     [type: string]: number[] | number
 }
 
-export class Resource {
+export class Resource implements IResource {
     static mapVal<T>(a: number[] | number, b: number[] | number, f: (a: number, b: number) => T) {
         if (Array.isArray(a)) {
             const c = Array.isArray(b) ? b : Array(a.length).fill(b)
@@ -105,14 +124,14 @@ export class Resource {
             return f(a || 0, b || 0)
         }
     }
+    [type: string]: any
     constructor(data = { } as IResource) {
         Object.assign(this, data)
     }
     map(val: IResource | number, fn: (a: number, b: number) => number) {
-        const self = this as any as IResource,
-            all = typeof val === 'number' ? self : { ...val, ...self }
-        return new Resource(mapMap(all, (_, key) =>
-            Resource.mapVal(self[key], typeof val === 'number' ? val : val[key], fn)))
+        const self = typeof val === 'number' ? this : { ...val, ...(this as IResource) }
+        return new Resource(mapMap(self, (_, key) =>
+            Resource.mapVal((this as IResource)[key], typeof val === 'number' ? val : val[key], fn)))
     }
     add(val: IResource) {
         return this.map(val, (a, b) => a + b)
@@ -124,31 +143,8 @@ export class Resource {
         return this.map(val, (a, b) => a * b)
     }
     valid() {
-        const self = this as any as IResource
-        return Object.values(self)
+        return Object.values(this)
             .every(val => Array.isArray(val) ? val.every(val => val >= 0) : val >= 0)
-    }
-}
-
-export class Usage {
-    constructor(data = { } as Partial<Usage>) {
-        Object.assign(this, data)
-    }
-    task = { } as Partial<Task>
-    res = { } as { [time: string]: IResource }
-    getAt(time: number) {
-        const { task, res } = this,
-            ticks = Object.keys(res)
-                .map(time => parseInt(time) + (task.created || 0))
-                .sort((a, b) => a - b),
-            index = ticks.findIndex((_, index) => ticks[index] < time && time <= ticks[index + 1]),
-            [left, right] = [ticks[index], ticks[index + 1]]
-        if (left < time && time <= right) {
-            const k = (time - left) / (right - left)
-            return new Resource(res[left]).mul((1 - k) / k).add(res[right]).mul(k)
-        } else {
-            return
-        }
     }
 }
 

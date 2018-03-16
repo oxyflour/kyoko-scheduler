@@ -2,7 +2,8 @@ import KyokoMesh from 'kyoko-mesh'
 import { Namespace } from 'etcd3'
 
 import workerAPI from './worker'
-import { Job, Step, Task, Worker, Dict, IResource, Resource, Usage } from '../models'
+import executorAPI from './executor'
+import { Job, Step, Task, Worker, Dict, IResource, Resource } from '../models'
 import { arrMap, mapMap } from '../utils'
 
 export interface ApiOpts {
@@ -12,49 +13,43 @@ export interface ApiOpts {
     mesh: KyokoMesh
 }
 
-const WORKER_RPC = workerAPI({ } as any)
+const WORKER_RPC = workerAPI({ } as any),
+    EXEC_RPC = executorAPI({ } as any)
+
 export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
-    async submit(job: Partial<Job>) {
-        const id = job.id = job.id || Math.random().toString(16).slice(2, 10)
-        await etcd.put(`submited/${id}`).value(JSON.stringify(job))
-        logger.log(`submited job "${id}"`, job)
-        return id
-    },
-    async test(worker: Partial<Worker>, usage: Partial<Usage>) {
-        const used = await etcd.namespace(`used/${worker.id}/`).getAll().json(),
-            usages = Object.values(used).concat(usage).map(usd => new Usage(usd)),
+    async verify(worker: Partial<Worker>, usage: Dict<IResource>) {
+        const working = await etcd.namespace(`working/${worker.id}/`).getAll().json(),
+            tasks = Object.values(working).concat({ usage }).map(data => new Task(data)),
             output = { } as { [time: string]: Resource }
-        for (const usage of usages) {
-            for (const time in usage.res || { }) {
-                const tick = (usage.task && usage.task.created || 0) + parseInt(time)
+        for (const task of tasks) {
+            for (const time in usage) {
+                const tick = (task.created || 0) + parseInt(time)
                 output[tick] = output[tick] || new Resource(worker.resource)
             }
         }
         for (const tick of Object.keys(output).map(tick => parseInt(tick))) {
-            for (const res of usages.map(usage => usage.getAt(tick)).filter(r => r)) {
-                output[tick] = output[tick].sub(res as any as IResource)
+            for (const res of tasks.map(task => task.res(tick)).filter(r => r) as IResource[]) {
+                output[tick] = output[tick].sub(res)
             }
         }
         return Object.values(output).every(res => res.valid())
     },
-    async query(tags: string[], usage: Partial<Usage>) {
+    async select(tags: string[], res: Dict<IResource>) {
         const [head, ...rest] = await Promise
                 .all(tags.map(tag => etcd.namespace(`tagged/${tag}/`).getAll().json())),
             workers = Object.keys(head || { })
                 .filter(id => rest.every(dict => !!dict[id]))
                 .map(id => new Worker(head[id])),
-            capability = await Promise.all(workers.map(worker => this.test(worker, usage))),
-            avail = workers.filter((_, index) => capability[index])
-        logger.log(`got ${workers.length} workers for tags ${tags}, ${avail.length} available`)
+            verified = await Promise.all(workers.map(worker => this.verify(worker, res))),
+            avail = workers.filter((_, index) => verified[index])
+        logger.log(`got ${workers.length} workers for tags "${tags}", ${avail.length} available`)
         return avail
     },
     async dispatch(job: Partial<Job>, step: string, worker: Partial<Worker>, tasks: Dict<Partial<Task>>) {
-        logger.log(`dispatching job "${job.id}", step "${step}" to worker "${worker.id}"`, tasks)
+        logger.log(`job "${job.id}", step "${step}" is being dispatched to worker "${worker.id}"`)
         const lock = await etcd.lock(`dispatch-worker/${worker.id}`).acquire()
         try {
-            const started = await mesh.query(WORKER_RPC).workers[worker.id || ''].start(tasks)
-            await Promise.all(started.map(id =>
-                etcd.put(`job/${job.id}/started/${step}/${id}`).value(JSON.stringify(tasks[id]))))
+            await mesh.query(WORKER_RPC).workers[worker.id || ''].start(tasks)
             await lock.release()
         } catch (err) {
             logger.error(`dispatch task failed`, err)
@@ -65,9 +60,10 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         const job = new Job(j),
             registry = await etcd.namespace(`job/${job.id}/started/${step}/`).getAll().json(),
             started = mapMap(registry, data => new Task(data)),
+            task = new Task({ job, step }),
+            usage = await task.plan(),
             stp = new Step(job.steps[step]),
-            usage = await stp.require(job, step, deps, started),
-            workers = await this.query(stp.tags, usage),
+            workers = await this.select(stp.tags, usage),
             plans = await stp.plan(job, step, deps, started, workers)
         logger.log(`job "${job.id}" got ${workers.length} workers, ${plans ? plans.length : 'no'} plans`)
         if (plans) {
@@ -79,14 +75,13 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
     },
     async update(id: string) {
         const job = new Job(await etcd.get(`submited/${id}`).json()),
-            success = await etcd.namespace(`job/${job.id}/success/`).getAll().json(),
+            registry = await etcd.namespace(`job/${job.id}/success/`).getAll().json(),
+            success = mapMap(registry, map => mapMap(map as Dict<Task>, data => new Task(data))),
             steps = Object.keys(job.steps).filter(step => !success[step])
-        logger.log(`updating job "${id}", steps to run: ${steps.length ? steps : 'none'}`)
+        logger.log(`job "${id}", steps to run: ${steps.length ? steps : 'none'}`)
         if (steps.length) {
-            await Promise.all(steps
-                .map(step => ({ step, deps: arrMap(job.deps(step), dep =>
-                    mapMap(success[dep] as any, data => new Task(data))) }))
-                .map(({ step, deps }) => this.start(job, step, deps)))
+            const deps = steps.map(step => job.deps(step)).map(deps => arrMap(deps, dep => success[dep]))
+            await Promise.all(steps.map((step, index) => this.start(job, step, deps[index])))
         } else {
             await etcd.delete().key(`submited/${id}`).exec()
             logger.log(`job "${id}" done`)
@@ -105,6 +100,15 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
                 await lock.release()
             }
         }
+    },
+    async submit(job: Partial<Job>) {
+        const id = job.id = job.id || Math.random().toString(16).slice(2, 10)
+        await etcd.put(`submited/${id}`).value(JSON.stringify(job))
+        logger.log(`submited job "${id}"`)
+        return id
+    },
+    async kill(id: string) {
+        await mesh.query(EXEC_RPC).executors[id].kill()
     },
 })
 

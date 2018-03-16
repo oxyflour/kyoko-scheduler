@@ -32,6 +32,12 @@ program.command(`serve-worker`)
         worker: { start: true }
     }))
 
+program.command(`serve`)
+    .action(() => new Service({
+        scheduler: { start: true },
+        worker: { start: true }
+    }))
+
 program.command(`submit <job-file>`)
     .action(file => new Service().once('ready', async mesh => {
         try {
@@ -44,10 +50,14 @@ program.command(`submit <job-file>`)
         }
     }))
 
-program.command(`update <job-id>`)
+program.command(`update [job-id]`)
     .action(id => new Service().once('ready', async mesh => {
         try {
-            await mesh.query(api).scheduler.update(id)
+            if (id) {
+                await mesh.query(api).scheduler.update(id)
+            } else {
+                await mesh.query(api).scheduler.check()
+            }
             process.exit(0)
         } catch (err) {
             console.error(`Update job "${id}" failed:`, err)
@@ -55,13 +65,13 @@ program.command(`update <job-id>`)
         }
     }))
 
-program.command(`check`)
-    .action(() => new Service().once('ready', async mesh => {
+program.command(`kill <job-id>`)
+    .action(id => new Service().once('ready', async mesh => {
         try {
-            await mesh.query(api).scheduler.check()
+            await mesh.query(api).scheduler.kill(id)
             process.exit(0)
         } catch (err) {
-            console.error(`Check job "${id}" failed:`, err)
+            console.error(`Update job "${id}" failed:`, err)
             process.exit(-1)
         }
     }))

@@ -15,9 +15,18 @@ export interface ApiOpts {
 
 function waitForResp(proc: ChildProcess, id: string, timeout: number) {
     return new Promise((resolve, reject) => {
-        proc.once('message', () => resolve())
-        proc.once('exit', () => reject(Error(`task "${id}" exited without responding message`)))
-        setTimeout(reject, timeout, Error(`wait for task "${id}" timeout`))
+        proc.on('message', function resp(msg) {
+            if (msg && msg.startedTaskId === id) {
+                resolve()
+                proc.removeListener('message', resp)
+            }
+        })
+        proc.once('exit', () => {
+            reject(Error(`task "${id}" exited without responding message`))
+        })
+        setTimeout(() => {
+            reject(Error(`wait for task "${id}" timeout`))
+        }, timeout)
     })
 }
 
@@ -31,7 +40,7 @@ const api = ({ logger, forkTimeout }: ApiOpts) => ({
             stdio = ['ignore', stdout, stderr, 'ipc'],
             detached = true,
             proc = spawn(process.execPath, [script, 'execute', id, JSON.stringify(task)], { stdio, detached })
-        logger.log(`starting "${process.execPath}", log "${tmpfile}"`, [script, 'execute', id, JSON.stringify(task)])
+        logger.log(`starting "${process.execPath}", log "${tmpfile}"`)
         try {
             await waitForResp(proc, id, forkTimeout)
             proc.unref()
@@ -43,11 +52,11 @@ const api = ({ logger, forkTimeout }: ApiOpts) => ({
         }
     },
     async start(tasks: { [id: string]: Partial<Task> }) {
-        logger.log(`tring to start tasks`, tasks)
+        logger.log(`trying to start tasks ${Object.keys(tasks)}`)
         const started = [ ] as string[]
         await Promise.all(Object.keys(tasks).map(async id => {
             try {
-                this.fork(id, tasks[id])
+                await this.fork(id, tasks[id])
                 started.push(id)
             } catch (err) {
                 logger.error(err)
