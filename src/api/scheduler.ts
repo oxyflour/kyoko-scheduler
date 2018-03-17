@@ -47,8 +47,9 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
     },
     async dispatch(job: Partial<Job>, step: string, worker: Partial<Worker>, tasks: Dict<Partial<Task>>) {
         logger.log(`job "${job.id}", step "${step}" is being dispatched to worker "${worker.id}"`)
-        const lock = await etcd.lock(`dispatch-worker/${worker.id}`).acquire()
+        const lock = await etcd.lock(`dispatch-worker/${worker.id}`)
         try {
+            await lock.acquire()
             await mesh.query(WORKER_RPC).workers[worker.id || ''].start(tasks)
             await lock.release()
         } catch (err) {
@@ -91,8 +92,9 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         const jobs = await etcd.namespace(`submited/`).getAll().keys()
         logger.log(`got ${jobs.length} jobs to update`)
         for (const id of jobs) {
-            const lock = await etcd.lock(`check-task/${id}`).acquire()
+            const lock = await etcd.lock(`check-task/${id}`)
             try {
+                await lock.acquire()
                 await this.update(id)
                 await lock.release()
             } catch (err) {

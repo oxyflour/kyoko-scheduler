@@ -6,7 +6,6 @@ const program = require('commander'),
     packageJson = require('./package.json'),
     Service = require('./dist/service').default,
     schedulerAPI = require('./dist/api/scheduler').default
-    opts = { },
     api = schedulerAPI({ })
 
 program.version(packageJson.version)
