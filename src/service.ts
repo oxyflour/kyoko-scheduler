@@ -21,6 +21,9 @@ const DEFAULT_CONFIG = {
     scheduler: { } as Partial<{
         start: boolean,
     }>,
+    watcher: { } as Partial<{
+        start: boolean,
+    }>,
     worker: { } as Partial<{
         start: boolean,
         forkTimeout: number,
@@ -48,6 +51,10 @@ export default class Service extends EventEmitter {
         if (this.opts.scheduler.start) {
             this.opts.logger.log(`starting node "${this.opts.id}" as scheduler`)
             mesh.register(schedulerAPI({ ...opts, mesh }))
+        }
+        if (this.opts.watcher.start) {
+            this.opts.logger.log(`starting node "${this.opts.id}" as watcher`)
+            await this.initWatcher(mesh)
         }
         if (this.opts.worker.start) {
             this.opts.logger.log(`starting node "${this.opts.id}" as worker`)
@@ -91,8 +98,9 @@ export default class Service extends EventEmitter {
 
     private async getTaskMeta() {
         const task = new Task(this.opts.executor.task),
-            usage = await task.plan()
-        return Object.assign(task, { usage })
+            usage = await task.plan(),
+            updated = Date.now()
+        return Object.assign(task, { usage, updated })
     }
 
     private async initWorker(lease: Lease) {
@@ -128,16 +136,33 @@ export default class Service extends EventEmitter {
         return { proc }
     }
 
+    watchQueue = Promise.resolve()
+    private pushQueue(fn: (...args: any[]) => Promise<any>) {
+        this.watchQueue = this.watchQueue.then(fn).catch(err => console.log(err))
+    }
+    private async initWatcher(mesh: KyokoMesh) {
+        const api = mesh.query(schedulerAPI({ } as any)).scheduler
+
+        const jobWatcher = await this.etcd.namespace(`submited/`).watch().prefix('').create()
+        jobWatcher.on('put', () => this.pushQueue(api.check))
+
+        const stepWatcher = await this.etcd.namespace(`success/`).watch().prefix('').create()
+        stepWatcher.on('put', () => this.pushQueue(api.check))
+
+        const taskWatcher = await this.etcd.namespace(`executor/`).watch().prefix('').create()
+        taskWatcher.on('delete', () => this.pushQueue(api.check))
+    }
+
     private async poll(lease: Lease) {
         if (this.opts.worker.start) {
             const meta = JSON.stringify(await this.getWorkerMeta())
             await lease.put(`worker/${this.opts.id}`).value(meta)
         }
         if (this.opts.executor.task) {
-            const meta = JSON.stringify(await this.getTaskMeta())
-            await lease.put(`executor/${this.opts.id}`).value(meta)
-            const { worker, job, step } = this.opts.executor.task
+            const meta = JSON.stringify(await this.getTaskMeta()),
+                { worker, job, step } = this.opts.executor.task
             if (worker && job) {
+                await lease.put(`executor/${job.id}/${this.opts.id}`).value(meta)
                 await lease.put(`working/${worker.id}/${this.opts.id}`).value(meta)
                 await this.etcd.put(`job/${job.id}/started/${step}/${this.opts.id}`).value(meta)
             }

@@ -35,6 +35,7 @@ program.command(`serve-worker`)
 program.command(`serve`)
     .action(() => new Service({
         scheduler: { start: true },
+        watcher: { start: true },
         worker: { start: true }
     }))
 

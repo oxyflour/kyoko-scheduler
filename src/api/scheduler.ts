@@ -69,13 +69,13 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         if (plans) {
             await Promise.all(plans.map(({ worker, tasks }) => this.dispatch(job, step, worker, tasks)))
         } else {
-            await etcd.put(`job/${job.id}/success/${step}`).value(JSON.stringify(registry))
+            await etcd.put(`success/${job.id}/${step}`).value(JSON.stringify(registry))
             logger.log(`job "${job.id}", step "${step}" finished`)
         }
     },
     async update(id: string) {
         const job = new Job(await etcd.get(`submited/${id}`).json()),
-            registry = await etcd.namespace(`job/${job.id}/success/`).getAll().json(),
+            registry = await etcd.namespace(`success/${job.id}/`).getAll().json(),
             success = mapMap(registry, map => mapMap(map as Dict<Task>, data => new Task(data))),
             steps = Object.keys(job.steps).filter(step => !success[step])
         logger.log(`job "${id}", steps to run: ${steps.length ? steps : 'none'}`)
