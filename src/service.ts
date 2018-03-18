@@ -7,7 +7,7 @@ import { Etcd3, Namespace, IOptions, Lease } from 'etcd3'
 import schedulerAPI from './api/scheduler'
 import workerAPI from './api/worker'
 import executorAPI from './api/executor'
-import { Worker, Task } from './models'
+import { Worker, Task, Step } from './models'
 
 const DEFAULT_CONFIG = {
     id: 'N' + Math.random().toString(16).slice(2, 10) + '-H' + os.hostname(),
@@ -98,7 +98,8 @@ export default class Service extends EventEmitter {
 
     private async getTaskMeta() {
         const task = new Task(this.opts.executor.task),
-            usage = await task.plan(),
+            step = new Step((task.job.steps || { })[task.step]),
+            usage = await step.usage(task),
             updated = Date.now()
         return Object.assign(task, { usage, updated })
     }
@@ -161,11 +162,9 @@ export default class Service extends EventEmitter {
         if (this.opts.executor.task) {
             const meta = JSON.stringify(await this.getTaskMeta()),
                 { worker, job, step } = this.opts.executor.task
-            if (worker && job) {
-                await lease.put(`executor/${job.id}/${this.opts.id}`).value(meta)
-                await lease.put(`working/${worker.id}/${this.opts.id}`).value(meta)
-                await this.etcd.put(`job/${job.id}/started/${step}/${this.opts.id}`).value(meta)
-            }
+            await lease.put(`executor/${job}/${this.opts.id}`).value(meta)
+            await lease.put(`working/${worker}/${this.opts.id}`).value(meta)
+            await this.etcd.put(`job/${job}/started/${step}/${this.opts.id}`).value(meta)
         }
     }
 }

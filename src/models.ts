@@ -24,6 +24,7 @@ export class Step {
     constructor(data = { } as Partial<Step>) {
         Object.assign(this, data)
     }
+    module = ''
     deps = [ ] as string[]
     tags = ['any']
     count = 1
@@ -31,37 +32,60 @@ export class Step {
     cwd = ''
     env = { } as Dict<string>
     res = null as IResource | null
-    async plan(job: Partial<Job>,
-            step: string, _deps: Dict<Dict<Partial<Task>>>,
-            started: Dict<Partial<Task>>, workers: Partial<Worker>[]) {
-        const rest = this.count - Object.keys(started).length
-        // have enough workers to run?
-        if (rest > 0 && workers.length >= rest) {
-            const plans = Array(rest).fill(Object.keys(started).length)
-                .map((start, offset) => ({ job, index: start + offset }))
-            return plans.map((arg, index) => {
-                const worker = workers[index],
-                    tasks = { } as Dict<Task>
-                tasks[`J${job.id}-S${step}-T${arg.index}`] = new Task({
-                    index: arg.index,
-                    total: this.count,
-                    cmd: format(this.cmd, arg),
-                    cwd: format(this.cwd, arg),
-                    env: Object.keys(this.env)
-                        .reduce((env, key) => ({ ...env, [key]: format(this.env[key], arg) }), { }),
-                    job, step, worker,
-                })
-                return { worker, tasks }
-            })
-        // need more workers?
-        } else if (rest > 0) {
-            return [ ]
-        // wait for all tasks to finish?
-        } else if (Object.values(started).some(task => !task.finished)) {
-            return [ ]
-        // done
+    async usage(task: Partial<Task>) {
+        if (this.module) {
+            const cls = require(this.module).default
+            if (typeof cls !== 'function') {
+                throw Error(`module "${this.module}" is not a class`)
+            }
+            return await Object.assign(new cls(this), this).usage(task) as Dict<IResource>
         } else {
-            return
+            const t = Date.now() + 60 * 60 * 1000 - (task.created || 0),
+                res = this.res || { cpu: 1 } as IResource
+            return { [0]: res, [t]: res } as Dict<IResource>
+        }
+    }
+    async plan(job: Partial<Job>,
+            step: string, deps: Dict<Dict<Partial<Task>>>,
+            started: Dict<Partial<Task>>, workers: Partial<Worker>[]) {
+        if (this.module) {
+            const cls = require(this.module).default
+            if (typeof cls !== 'function') {
+                throw Error(`module "${this.module}" is not a class`)
+            }
+            const stp = Object.assign(new cls(this), this)
+            return await stp.plan(job, step, deps, started, workers) as {
+                worker: Partial<Worker>,
+                tasks: Dict<Task>,
+            }[]
+        } else {
+            const rest = this.count - Object.keys(started).length
+            // have enough workers to run?
+            if (rest > 0 && workers.length >= rest) {
+                return workers.slice(0, rest).map((worker, offset) => {
+                    const tasks = { } as Dict<Partial<Task>>,
+                        index = Object.keys(started).length + offset,
+                        arg = { job, step, deps, started, index }
+                    tasks[`J${job.id}-S${step}-T${index}`] = {
+                        index: index,
+                        total: this.count,
+                        cmd: format(this.cmd, arg),
+                        cwd: format(this.cwd, arg),
+                        env: mapMap(this.env, val => format(val, arg)),
+                        job, step, worker,
+                    }
+                    return { worker, tasks }
+                })
+            // need more workers?
+            } else if (rest > 0) {
+                return [ ]
+            // wait for all tasks to finish?
+            } else if (Object.values(started).some(task => !task.finished)) {
+                return [ ]
+            // done
+            } else {
+                return
+            }
         }
     }
 }
@@ -85,12 +109,6 @@ export class Task {
     worker = { } as Partial<Worker>
 
     usage = { } as { [time: string]: IResource }
-    async plan() {
-        const t = Date.now() + 60 * 60 * 1000 - this.created,
-            step = (this.job.steps || { })[this.step],
-            res = (step || { }).res || { cpu: 1 } as IResource
-        return { [0]: res, [t]: res } as Dict<IResource>
-    }
     res(time: number) {
         const { usage, created } = this,
             ticks = Object.keys(usage)

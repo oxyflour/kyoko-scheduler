@@ -61,9 +61,8 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         const job = new Job(j),
             registry = await etcd.namespace(`job/${job.id}/started/${step}/`).getAll().json(),
             started = mapMap(registry, data => new Task(data)),
-            task = new Task({ job, step }),
-            usage = await task.plan(),
             stp = new Step(job.steps[step]),
+            usage = await stp.usage({ job, step }),
             workers = await this.select(stp.tags, usage),
             plans = await stp.plan(job, step, deps, started, workers)
         logger.log(`job "${job.id}" got ${workers.length} workers, ${plans ? plans.length : 'no'} plans`)
