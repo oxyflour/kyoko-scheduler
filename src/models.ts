@@ -61,7 +61,7 @@ export class Step {
         } else {
             const rest = this.count - Object.keys(started).length
             // have enough workers to run?
-            if (rest > 0 && workers.length >= rest) {
+            if (rest > 0 && workers.length >= 0) {
                 return workers.slice(0, rest).map((worker, offset) => {
                     const tasks = { } as Dict<Partial<Task>>,
                         index = Object.keys(started).length + offset,
