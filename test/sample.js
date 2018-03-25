@@ -1,8 +1,17 @@
 module.exports = {
     steps: {
         A: {
-            res: { cpu: 4 },
-            cmd: 'ping localhost -n 10'
+            instances: 5,
+            concurrency: 2,
+            res: { cpu: 1 },
+            cmd: 'ping localhost -n 5',
         },
+        B: {
+            deps: ['A'],
+            instances: 3,
+            concurrency: 3,
+            res: { cpu: 1 },
+            cmd: 'ping localhost -n 20',
+        }
     }
 }

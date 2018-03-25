@@ -2,6 +2,7 @@
 
 const program = require('commander'),
     fs = require('fs'),
+    os = require('os'),
     path = require('path'),
     packageJson = require('./package.json'),
     Service = require('./dist/service').default,
@@ -13,27 +14,24 @@ program.version(packageJson.version)
 program.command(`execute <task-id> <task-json>`)
     .action((taskId, taskData) => new Service({
         id: taskId,
-        executor: {
-            start: true,
-            task: JSON.parse(taskData),
-        }
+        startExecutor: JSON.parse(taskData),
     }))
 
 program.command(`serve-scheduler`)
     .action(() => new Service({
-        scheduler: { start: true }
+        startScheduler: true
     }))
 
 program.command(`serve-worker`)
     .action(() => new Service({
-        worker: { start: true }
+        startWorker: true,
     }))
 
 program.command(`serve`)
     .action(() => new Service({
-        scheduler: { start: true },
-        watcher: { start: true },
-        worker: { start: true }
+        startScheduler: true,
+        startWatcher: true,
+        startWorker: true,
     }))
 
 program.command(`submit <job-file>`)

@@ -1,6 +1,6 @@
 import treeKill from 'tree-kill'
-import { ChildProcess } from "child_process"
-import { Namespace } from "etcd3"
+import { ChildProcess } from 'child_process'
+import { Namespace } from 'etcd3'
 import { promisify } from 'util'
 
 export interface ApiOpts {
@@ -12,9 +12,9 @@ export interface ApiOpts {
 
 const api = ({ etcd, id, proc }: ApiOpts) => ({
     async kill() {
-        const lock = etcd.lock(`proc-stop/${id}`)
-        await lock.acquire()
+        const lock = etcd.lock(`task/killing/${id}`)
         try {
+            await lock.acquire()
             await promisify(treeKill)(proc.pid, undefined, undefined)
             await lock.release()
         } catch (err) {
