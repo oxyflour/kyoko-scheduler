@@ -44,19 +44,12 @@ export interface Dict<T> {
 }
 
 export interface IResource {
-    [type: string]: number[] | number
+    [type: string]: number[]
 }
 
 export class Resource {
-    static mapVal<T>(a: number[] | number, b: number[] | number, f: (a: number, b: number) => T) {
-        if (Array.isArray(a)) {
-            const c = Array.isArray(b) ? b : Array(a.length).fill(b)
-            return a.map((_, i) => f(a[i] || 0, c[i] || 0))
-        } else if (Array.isArray(b)) {
-            return b.map((_, i) => f(b[i] || 0, a || 0))
-        } else {
-            return f(a || 0, b || 0)
-        }
+    static mapVal<T>(a: number[], b: number[], f: (a: number, b: number) => T) {
+        return a.map((_, i) => f(a[i] || 0, b[i] || 0))
     }
     constructor(data = { } as IResource) {
         Object.assign(this, data)
@@ -67,7 +60,7 @@ export class Resource {
     map(val: IResource, fn: (a: number, b: number) => number) {
         const a = this.toPlain(),
             b = { ...val, ...a }
-        return new Resource(mapMap(b, (_, key) => Resource.mapVal(a[key], b[key], fn)))
+        return new Resource(mapMap(b, (_, key) => Resource.mapVal(a[key] || [ ], b[key] || [ ], fn)))
     }
     add(val: IResource) {
         return this.map(val, (a, b) => a + b)
@@ -75,12 +68,12 @@ export class Resource {
     sub(val: IResource) {
         return this.map(val, (a, b) => a - b)
     }
-    mul(val: number) {
-        return this.map(mapMap(this.toPlain(), () => val), (a, b) => a * b)
+    mul(val: number | number[]) {
+        const map = mapMap(this.toPlain(), arr => Array.isArray(val) ? val : arr.map(() => val))
+        return this.map(map, (a, b) => a * b)
     }
     avail() {
-        return Object.values(this)
-            .every(val => Array.isArray(val) ? val.every(val => val >= 0) : val >= 0)
+        return Object.values(this.toPlain()).every(val => val.every(val => val >= 0))
     }
 }
 

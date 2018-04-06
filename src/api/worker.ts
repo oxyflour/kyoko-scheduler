@@ -77,6 +77,7 @@ const api = ({ etcd, logger, id }: ApiOpts) => ({
 })
 
 export default (opts: ApiOpts) => ({
+    __filename,
     workers: {
         [opts.id]: api(opts)
     }

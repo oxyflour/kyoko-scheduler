@@ -13,11 +13,11 @@ export interface ApiOpts {
     mesh: KyokoMesh
 }
 
-const WORKER_RPC = workerAPI({ } as any),
-    EXEC_RPC = executorAPI({ } as any)
+const WORKER_RPC = { } as ReturnType<typeof workerAPI>,
+    EXEC_RPC = { } as ReturnType<typeof executorAPI>
 
 export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
-    async select(tags: string[], usage: Dict<IResource>) {
+    async select(tags: string[], usage: Dict<IResource>): Promise<Worker[]> {
         const tagged = await Promise.all(tags.map(tag => etcd.namespace(`worker/tagged/${tag}/`).getAll().keys())),
             keys = Array.from(new Set(tagged.reduce((all, keys) => all.concat(keys), [ ]))),
             locks = await Promise.all(keys.map(id => etcd.get(`worker/dispatching/${id}`).string())),
@@ -70,7 +70,7 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
         const jobs = await etcd.namespace(`job/submited/`).getAll().keys()
         logger.log(`got ${jobs.length} jobs to update`)
         for (const id of jobs) {
-            const lock = etcd.lock(`job/checking/${id}`)
+            const lock = etcd.lock(`job/updating/${id}`)
             try {
                 await lock.acquire()
                 await this.update(id)
@@ -94,5 +94,6 @@ export const api = ({ etcd, mesh, logger }: ApiOpts) => ({
 })
 
 export default (opts: ApiOpts) => ({
+    __filename,
     scheduler: api(opts),
 })

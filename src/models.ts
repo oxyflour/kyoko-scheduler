@@ -22,7 +22,7 @@ export class Step {
     }
     module = ''
     deps = [ ] as string[]
-    tags = ['any']
+    tags = [ ] as string[]
     instances = 1
     concurrency = 1
     cmd = ''

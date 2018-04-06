@@ -25,6 +25,7 @@ const api = ({ etcd, id, proc }: ApiOpts) => ({
 })
 
 export default (opts: ApiOpts) => ({
+    __filename,
     executors: {
         [opts.id]: api(opts)
     }

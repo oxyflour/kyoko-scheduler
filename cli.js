@@ -1,12 +1,14 @@
 #!/usr/bin/env
 
+require('ts-node/register')
+
 const program = require('commander'),
     fs = require('fs'),
     os = require('os'),
     path = require('path'),
     packageJson = require('./package.json'),
-    Service = require('./dist/service').default,
-    schedulerAPI = require('./dist/api/scheduler').default
+    Service = require('./src/service').default,
+    schedulerAPI = require('./src/api/scheduler').default
     api = schedulerAPI({ })
 
 program.version(packageJson.version)

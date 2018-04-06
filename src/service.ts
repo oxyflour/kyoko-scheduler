@@ -11,7 +11,7 @@ import { Job, Worker, Task, Step } from './models'
 import { Usage, debounce } from './utils'
 
 const DEFAULT_CONFIG = {
-    id: `${Math.random().toString(16).slice(2, 10)}(${os.hostname()})`,
+    id: `${Math.random().toString(16).slice(2, 10)}@${os.hostname()}`,
     logger: console,
     etcdOpts: {
         hosts: 'http://localhost:2379'
@@ -32,11 +32,12 @@ export default class Service extends EventEmitter {
         super()
         this.opts = { ...DEFAULT_CONFIG, ...opts }
         this.etcd = new Etcd3(this.opts.etcdOpts).namespace(this.opts.etcdPrefix)
-        this.init()
+        this.init().catch(err => this.opts.logger.error(err))
     }
 
     private async init() {
-        const mesh = new KyokoMesh(this.opts),
+        const { id, etcdLease, etcdOpts, etcdPrefix } = this.opts,
+            mesh = new KyokoMesh({ etcdLease, etcdOpts, etcdPrefix, nodeName: id }),
             opts = { etcd: this.etcd, logger: this.opts.logger, id: this.opts.id },
             lease = this.etcd.lease(this.opts.etcdLease)
         if (this.opts.startScheduler) {
@@ -58,7 +59,7 @@ export default class Service extends EventEmitter {
             mesh.register(executorAPI({ ...opts, proc }))
         }
 
-        await mesh.announce()
+        await mesh.init()
         this.emit('ready', mesh)
         if (this.opts.startScheduler || this.opts.startWorker || this.opts.startExecutor) {
             this.opts.logger.log(`node "${this.opts.id}" ready`)
@@ -104,8 +105,8 @@ export default class Service extends EventEmitter {
         const { id } = this.opts,
             running = await this.etcd.namespace(`task/running/${id}/`).getAll().json(),
             total = {
-                cpu: os.cpus().length,
-                mem: os.totalmem(),
+                cpu: [os.cpus().length],
+                mem: [os.totalmem()],
                 // TODO: add more resource
             },
             usage = new Usage().add(...Object.values(running).map(task => new Task(task).usage)).toPlain(),
